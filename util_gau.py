@@ -34,28 +34,28 @@ def naive_gaussian():
         1, 0, 0, 0,
         1, 0, 0, 0
     ]).astype(np.float32).reshape(-1, 4)
-    gau_s = np.array([
+    gau_scale = np.array([
         0.03, 0.03, 0.03,
         0.2, 0.03, 0.03,
         0.03, 0.2, 0.03,
         0.03, 0.03, 0.2
     ]).astype(np.float32).reshape(-1, 3)
-    gau_c = np.array([
+    gau_sh = np.array([
         1, 0, 1, 
         1, 0, 0, 
         0, 1, 0, 
         0, 0, 1, 
     ]).astype(np.float32).reshape(-1, 3)
-    gau_c = (gau_c - 0.5) / 0.28209
-    gau_a = np.array([
+    gau_sh = (gau_sh - 0.5) / 0.28209
+    gau_opacity = np.array([
         1, 1, 1, 1
     ]).astype(np.float32).reshape(-1, 1)
     return GaussianData(
         gau_xyz,
         gau_rot,
-        gau_s,
-        gau_a,
-        gau_c
+        gau_scale,
+        gau_opacity,
+        gau_sh
     )
 
 
@@ -78,7 +78,6 @@ def load_ply(path):
     features_extra = np.zeros((xyz.shape[0], len(extra_f_names)))
     for idx, attr_name in enumerate(extra_f_names):
         features_extra[:, idx] = np.asarray(plydata.elements[0][attr_name])
-    # Reshape (P,F*SH_coeffs) to (P, F, SH_coeffs except DC)
     features_extra = features_extra.reshape((features_extra.shape[0], 3, (max_sh_degree + 1) ** 2 - 1))
     features_extra = np.transpose(features_extra, [0, 2, 1])
 
@@ -108,6 +107,6 @@ def load_ply(path):
     return GaussianData(xyz, rots, scales, opacities, shs)
 
 if __name__ == "__main__":
-    gs = load_ply("C:\\Users\\MSI_NB\\Downloads\\viewers\\models\\train\\point_cloud\\iteration_7000\\point_cloud.ply")
+    gs = load_ply("home/majq/Lecture/splatter/assets/output/point_cloud/iteration_30000/point_cloud.ply")
     a = gs.flat()
     print(a.shape)

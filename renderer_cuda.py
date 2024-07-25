@@ -195,18 +195,18 @@ class CUDARenderer(GaussianRenderBase):
 
     def update_camera_pose(self, camera: util.Camera):
         self.need_rerender = True
-        view_matrix = camera.get_view_matrix()
+        view_matrix = camera.get_view_mat()
         view_matrix[[0, 2], :] = -view_matrix[[0, 2], :]
-        proj = camera.get_project_matrix() @ view_matrix
+        proj = camera.get_project_mat() @ view_matrix
         self.raster_settings["viewmatrix"] = torch.tensor(view_matrix.T).float().cuda()
         self.raster_settings["campos"] = torch.tensor(camera.position).float().cuda()
         self.raster_settings["projmatrix"] = torch.tensor(proj.T).float().cuda()
 
     def update_camera_intrin(self, camera: util.Camera):
         self.need_rerender = True
-        view_matrix = camera.get_view_matrix()
+        view_matrix = camera.get_view_mat()
         view_matrix[[0, 2], :] = -view_matrix[[0, 2], :]
-        proj = camera.get_project_matrix() @ view_matrix
+        proj = camera.get_project_mat() @ view_matrix
         self.raster_settings["projmatrix"] = torch.tensor(proj.T).float().cuda()
         hfovx, hfovy, focal = camera.get_htanfovxy_focal()
         self.raster_settings["tanfovx"] = hfovx

@@ -257,8 +257,8 @@ def main():
                     #     gau_rot=gaussians.rot,
                     #     gau_c=gaussians.sh,
                     #     gau_a=gaussians.opacity,
-                    #     viewmat=g_camera.get_view_matrix(),
-                    #     projmat=g_camera.get_project_matrix(),
+                    #     viewmat=g_camera.get_view_mat(),
+                    #     projmat=g_camera.get_project_mat(),
                     #     hfovxyfocal=g_camera.get_htanfovxy_focal()
                     # )
                 imgui.end()

@@ -138,7 +138,7 @@ class OpenGLRenderer(GaussianRenderBase):
         ], dtype=np.uint32).reshape(2, 3)
         
         # load quad geometry
-        vao, buffer_id = util.set_attributes(self.program, ["position"], [self.quad_v])
+        vao, buffer_id = util.set_attributes(self.program, [("position", self.quad_v)])
         util.set_faces_tovao(vao, self.quad_f)
         self.vao = vao
         self.gau_bufferid = None
@@ -166,7 +166,7 @@ class OpenGLRenderer(GaussianRenderBase):
         util.set_uniform_1int(self.program, gaus.sh_dim, "sh_dim")
 
     def sort_and_update(self, camera: camera.Camera):
-        index = _sort_gaussian(self.gaussians, camera.get_view_matrix())
+        index = _sort_gaussian(self.gaussians, camera.get_view_mat())
         self.index_bufferid = util.set_storage_buffer_data(self.program, "gi", index, 
                                                            bind_idx=1,
                                                            buffer_id=self.index_bufferid)
@@ -182,12 +182,12 @@ class OpenGLRenderer(GaussianRenderBase):
         gl.glViewport(0, 0, w, h)
 
     def update_camera_pose(self, camera: camera.Camera):
-        view_mat = camera.get_view_matrix()
+        view_mat = camera.get_view_mat()
         util.set_uniform_mat4(self.program, view_mat, "view_matrix")
         util.set_uniform_v3(self.program, camera.position, "cam_pos")
 
     def update_camera_intrin(self, camera: camera.Camera):
-        proj_mat = camera.get_project_matrix()
+        proj_mat = camera.get_project_mat()
         util.set_uniform_mat4(self.program, proj_mat, "projection_matrix")
         util.set_uniform_v3(self.program, camera.get_htanfovxy_focal(), "hfovxy_focal")
 

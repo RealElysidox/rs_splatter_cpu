@@ -30,17 +30,17 @@ class Camera:
         self.roll_sensitivity = 0.03
         self.target_dist = 3.
     
-    def _global_rot_mat(self):
+    def global_rot_mat(self):
         x = np.array([1, 0, 0])
         z = np.cross(x, self.up)
         z = z / np.linalg.norm(z)
         x = np.cross(self.up, z)
         return np.stack([x, self.up, z], axis=-1)
 
-    def get_view_matrix(self):
+    def get_view_mat(self):
         return np.array(glm.lookAt(self.position, self.target, self.up))
 
-    def get_project_matrix(self):
+    def get_project_mat(self):
         # htanx, htany, focal = self.get_htanfovxy_focal()
         # f_n = self.zfar - self.znear
         # proj_mat = np.array([
@@ -86,7 +86,7 @@ class Camera:
             front = np.array([np.cos(self.yaw) * np.cos(self.pitch), 
                             np.sin(self.pitch), np.sin(self.yaw) * 
                             np.cos(self.pitch)])
-            front = self._global_rot_mat() @ front.reshape(3, 1)
+            front = self.global_rot_mat() @ front.reshape(3, 1)
             front = front[:, 0]
             self.position[:] = - front * np.linalg.norm(self.position - self.target) + self.target
             

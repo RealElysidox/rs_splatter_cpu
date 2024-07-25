@@ -8,11 +8,11 @@ def load_shaders(vs, fs):
     vertex_shader = open(vs, 'r').read()        
     fragment_shader = open(fs, 'r').read()
 
-    active_shader = shaders.compileProgram(
+    target_shader = shaders.compileProgram(
         shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
         shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER),
     )
-    return active_shader
+    return target_shader
 
 
 def compile_shaders(vertex_shader, fragment_shader):
@@ -23,62 +23,30 @@ def compile_shaders(vertex_shader, fragment_shader):
     return active_shader
 
 
-def set_attributes(program, keys, values, vao=None, buffer_ids=None):
+def set_attributes(program, attributes, vao=None, buffer_ids=None):
     glUseProgram(program)
-    if vao is None:
-        vao = glGenVertexArrays(1)
+    vao = vao or glGenVertexArrays(1)
     glBindVertexArray(vao)
 
-    if buffer_ids is None:
-        buffer_ids = [None] * len(keys)
-    for i, (key, value, b) in enumerate(zip(keys, values, buffer_ids)):
-        if b is None:
-            b = glGenBuffers(1)
-            buffer_ids[i] = b
-        glBindBuffer(GL_ARRAY_BUFFER, b)
-        glBufferData(GL_ARRAY_BUFFER, value.nbytes, value.reshape(-1), GL_STATIC_DRAW)
-        length = value.shape[-1]
-        pos = glGetAttribLocation(program, key)
-        glVertexAttribPointer(pos, length, GL_FLOAT, False, 0, None)
+    buffer_ids = buffer_ids or [glGenBuffers(1) for _ in attributes]
+    for i, (name, data) in enumerate(attributes):
+        buffer_id = buffer_ids[i]
+        glBindBuffer(GL_ARRAY_BUFFER, buffer_id)
+        glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, GL_STATIC_DRAW)
+        pos = glGetAttribLocation(program, name)
+        glVertexAttribPointer(pos, data.shape[-1], GL_FLOAT, False, 0, None)
         glEnableVertexAttribArray(pos)
-    
-    glBindBuffer(GL_ARRAY_BUFFER,0)
+    glBindBuffer(GL_ARRAY_BUFFER, 0)
     return vao, buffer_ids
 
-def set_attribute(program, key, value, vao=None, buffer_id=None):
-    glUseProgram(program)
-    if vao is None:
-        vao = glGenVertexArrays(1)
-    glBindVertexArray(vao)
+def set_attribute(program, name, data, vao=None, buffer_id=None):
+    return set_attributes(program, [(name, data)], vao, [buffer_id])
 
-    if buffer_id is None:
-        buffer_id = glGenBuffers(1)
-    glBindBuffer(GL_ARRAY_BUFFER, buffer_id)
-    glBufferData(GL_ARRAY_BUFFER, value.nbytes, value.reshape(-1), GL_STATIC_DRAW)
-    length = value.shape[-1]
-    pos = glGetAttribLocation(program, key)
-    glVertexAttribPointer(pos, length, GL_FLOAT, False, 0, None)
-    glEnableVertexAttribArray(pos)
-    glBindBuffer(GL_ARRAY_BUFFER,0)
-    return vao, buffer_id
-
-def set_attribute_instanced(program, key, value, instance_stride=1, vao=None, buffer_id=None):
-    glUseProgram(program)
-    if vao is None:
-        vao = glGenVertexArrays(1)
-    glBindVertexArray(vao)
-
-    if buffer_id is None:
-        buffer_id = glGenBuffers(1)
-    glBindBuffer(GL_ARRAY_BUFFER, buffer_id)
-    glBufferData(GL_ARRAY_BUFFER, value.nbytes, value.reshape(-1), GL_STATIC_DRAW)
-    length = value.shape[-1]
-    pos = glGetAttribLocation(program, key)
-    glVertexAttribPointer(pos, length, GL_FLOAT, False, 0, None)
-    glEnableVertexAttribArray(pos)
+def set_attribute_instanced(program, name, data, instance_stride=1, vao=None, buffer_id=None):
+    vao, buffer_ids = set_attributes(program, [(name, data)], vao, [buffer_id])
+    pos = glGetAttribLocation(program, name)
     glVertexAttribDivisor(pos, instance_stride)
-    glBindBuffer(GL_ARRAY_BUFFER,0)
-    return vao, buffer_id
+    return vao, buffer_ids[0]
 
 def set_storage_buffer_data(program, key, value: np.ndarray, bind_idx, vao=None, buffer_id=None):
     glUseProgram(program)
@@ -87,8 +55,7 @@ def set_storage_buffer_data(program, key, value: np.ndarray, bind_idx, vao=None,
     if vao is not None:
         glBindVertexArray(vao)
     
-    if buffer_id is None:
-        buffer_id = glGenBuffers(1)
+    buffer_id = buffer_id or glGenBuffers(1)
     glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer_id)
     glBufferData(GL_SHADER_STORAGE_BUFFER, value.nbytes, value.reshape(-1), GL_STATIC_DRAW)
     # pos = glGetProgramResourceIndex(program, GL_SHADER_STORAGE_BLOCK, key)  # TODO: ???
@@ -120,10 +87,6 @@ def set_gl_bindings(vertices, faces):
     element_buffer = glGenBuffers(1)
     glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer)
     glBufferData(GL_ELEMENT_ARRAY_BUFFER, faces.nbytes, faces, GL_STATIC_DRAW)
-    # glVertexAttribPointer(1, 3, GL_FLOAT, False, 36, ctypes.c_void_p(12))
-    # glEnableVertexAttribArray(1)
-    # glVertexAttribPointer(2, 3, GL_FLOAT, False, 36, ctypes.c_void_p(12))
-    # glEnableVertexAttribArray(2)
 
 def set_uniform_mat4(shader, content, name):
     glUseProgram(shader)
@@ -185,8 +148,7 @@ def set_uniform_v2(shader, contents, name):
 def set_texture2d(img, texid=None):
     h, w, c = img.shape
     assert img.dtype == np.uint8
-    if texid is None:
-        texid = glGenTextures(1)
+    texid = texid or glGenTextures(1)
     glBindTexture(GL_TEXTURE_2D, texid)
     glTexImage2D(
         GL_TEXTURE_2D, 0, GL_RGB, w, h, 0,   
@@ -208,5 +170,3 @@ def update_texture2d(img, texid, offset):
         GL_TEXTURE_2D, 0, x1, y1, w, h,
         GL_RGB, GL_UNSIGNED_BYTE, img
     )
-
-
