@@ -89,10 +89,6 @@ class GaussianRenderBase:
     @reduce_updates.setter
     def reduce_updates(self, val):
         self._reduce_updates = val
-        self.update_vsync()
-
-    def update_vsync(self):
-        print("VSync is not supported")
 
     def update_gaussian_data(self, gaus: util_gau.GaussianData):
         raise NotImplementedError()

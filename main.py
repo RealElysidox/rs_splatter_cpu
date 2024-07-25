@@ -12,7 +12,7 @@ from tkinter import filedialog
 import os
 import sys
 import argparse
-from renderer_ogl import OpenGLRenderer, GaussianRenderBase
+from renderer import OpenGLRenderer, GaussianRenderBase
 
 # Add the directory containing main.py to the Python path
 dir_path = os.path.dirname(os.path.realpath(__file__))
