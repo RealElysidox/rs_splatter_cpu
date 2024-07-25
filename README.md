@@ -1,1 +1,1 @@
-# rs_splatter_cpu
+# Splatpy_cpu
