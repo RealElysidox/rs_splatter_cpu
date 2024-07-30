@@ -1,194 +1,228 @@
-from OpenGL import GL as gl
-import util
-import util_gau
-import camera
+import math
 import numpy as np
+from tqdm import tqdm
+from loguru import logger
+from math import sqrt, ceil
 
-try:
-    from OpenGL.raw.WGL.EXT.swap_control import wglSwapIntervalEXT
-except:
-    wglSwapIntervalEXT = None
-
-
-_sort_buffer_xyz = None
-_sort_buffer_gausid = None  # used to tell whether gaussian is reloaded
-
-def _sort_gaussian_cpu(gaus, view_mat):
-    xyz = np.asarray(gaus.xyz)
-    view_mat = np.asarray(view_mat)
-
-    xyz_view = view_mat[None, :3, :3] @ xyz[..., None] + view_mat[None, :3, 3, None]
-    depth = xyz_view[:, 2, 0]
-
-    index = np.argsort(depth)
-    index = index.astype(np.int32).reshape(-1, 1)
-    return index
+from util import *
+from camera import getWorld2View2, getProjectionMatrix
 
 
-def _sort_gaussian_cupy(gaus, view_mat):
-    import cupy as cp
-    global _sort_buffer_gausid, _sort_buffer_xyz
-    if _sort_buffer_gausid != id(gaus):
-        _sort_buffer_xyz = cp.asarray(gaus.xyz)
-        _sort_buffer_gausid = id(gaus)
+class Rasterizer:
+    def __init__(self) -> None:
+        pass
 
-    xyz = _sort_buffer_xyz
-    view_mat = cp.asarray(view_mat)
+    def forward(
+        self,
+        P,  # int, num of guassians
+        D,  # int, degree of spherical harmonics
+        M,  # int, num of sh base function
+        background,  # color of background, default black
+        width,  # int, width of output image
+        height,  # int, height of output image
+        means3D,  # ()center position of 3d gaussian
+        shs,  # spherical harmonics coefficient
+        colors_precomp,
+        opacities,  # opacities
+        scales,  # scale of 3d gaussians
+        scale_modifier,  # default 1
+        rotations,  # rotation of 3d gaussians
+        cov3d_precomp,
+        viewmatrix,  # matrix for view transformation
+        projmatrix,  # *(4, 4), matrix for transformation, aka mvp
+        cam_pos,  # position of camera
+        tan_fovx,  # float, tan value of fovx
+        tan_fovy,  # float, tan value of fovy
+        prefiltered,
+    ) -> None:
 
-    xyz_view = view_mat[None, :3, :3] @ xyz[..., None] + view_mat[None, :3, 3, None]
-    depth = xyz_view[:, 2, 0]
+        focal_y = height / (2 * tan_fovy)  # focal of y axis
+        focal_x = width / (2 * tan_fovx)
 
-    index = cp.argsort(depth)
-    index = index.astype(cp.int32).reshape(-1, 1)
+        # run preprocessing per-Gaussians
+        # transformation, bounding, conversion of SHs to RGB
+        logger.info("Starting preprocess per 3d gaussian...")
+        preprocessed = self.preprocess(
+            P,
+            D,
+            M,
+            means3D,
+            scales,
+            scale_modifier,
+            rotations,
+            opacities,
+            shs,
+            viewmatrix,
+            projmatrix,
+            cam_pos,
+            width,
+            height,
+            focal_x,
+            focal_y,
+            tan_fovx,
+            tan_fovy,
+        )
 
-    index = cp.asnumpy(index) # convert to numpy
-    return index
+        # produce [depth] key and corresponding guassian indices
+        # sort indices by depth
+        depths = preprocessed["depths"]
+        point_list = np.argsort(depths)
 
+        # render
+        logger.info("Starting render...")
+        out_color = self.render(
+            point_list,
+            width,
+            height,
+            preprocessed["points_xy_image"],
+            preprocessed["rgbs"],
+            preprocessed["conic_opacity"],
+            background,
+        )
+        return out_color
 
-def _sort_gaussian_torch(gaus, view_mat):
-    global _sort_buffer_gausid, _sort_buffer_xyz
-    if _sort_buffer_gausid != id(gaus):
-        _sort_buffer_xyz = torch.tensor(gaus.xyz).cuda()
-        _sort_buffer_gausid = id(gaus)
+    def preprocess(
+        self,
+        P,
+        D,
+        M,
+        orig_points,
+        scales,
+        scale_modifier,
+        rotations,
+        opacities,
+        shs,
+        viewmatrix,
+        projmatrix,
+        cam_pos,
+        W,
+        H,
+        focal_x,
+        focal_y,
+        tan_fovx,
+        tan_fovy,
+    ):
 
-    xyz = _sort_buffer_xyz
-    view_mat = torch.tensor(view_mat).cuda()
-    xyz_view = view_mat[None, :3, :3] @ xyz[..., None] + view_mat[None, :3, 3, None]
-    depth = xyz_view[:, 2, 0]
-    index = torch.argsort(depth)
-    index = index.type(torch.int32).reshape(-1, 1).cpu().numpy()
-    return index
+        rgbs = []  # rgb colors of gaussians
+        cov3Ds = []  # covariance of 3d gaussians
+        depths = []  # depth of 3d gaussians after view&proj transformation
+        radii = []  # radius of 2d gaussians
+        conic_opacity = []  # covariance inverse of 2d gaussian and opacity
+        points_xy_image = []  # mean of 2d guassians
+        for idx in range(P):
+            # make sure point in frustum
+            p_orig = orig_points[idx]
+            p_view = in_frustum(p_orig, viewmatrix)
+            if p_view is None:
+                continue
+            depths.append(p_view[2])
 
+            # transform point, from world to ndc
+            # Notice, projmatrix already processed as mvp matrix
+            p_hom = transformPoint4x4(p_orig, projmatrix)
+            p_w = 1 / (p_hom[3] + 0.0000001)
+            p_proj = [p_hom[0] * p_w, p_hom[1] * p_w, p_hom[2] * p_w]
 
-# Decide which sort to use
-_sort_gaussian = None
-try:
-    import torch
-    if not torch.cuda.is_available():
-        raise ImportError
-    print("Detect torch cuda installed, will use torch as sorting backend")
-    _sort_gaussian = _sort_gaussian_torch
-except ImportError:
-    try:
-        import cupy as cp
-        print("Detect cupy installed, will use cupy as sorting backend")
-        _sort_gaussian = _sort_gaussian_cupy
-    except ImportError:
-        _sort_gaussian = _sort_gaussian_cpu
+            # compute 3d covarance by scaling and rotation parameters
+            scale = scales[idx]
+            rotation = rotations[idx]
+            cov3D = computeCov3D(scale, scale_modifier, rotation)
+            cov3Ds.append(cov3D)
 
+            # compute 2D screen-space covariance matrix
+            # based on splatting, -> JW Sigma W^T J^T
+            cov = computeCov2D(
+                p_orig, focal_x, focal_y, tan_fovx, tan_fovy, cov3D, viewmatrix
+            )
 
-class GaussianRenderBase:
-    def __init__(self):
-        self.gaussians = None
-        self._reduce_updates = True
+            # invert covarance(EWA splatting)
+            det = cov[0] * cov[2] - cov[1] * cov[1]
+            if det == 0:
+                depths.pop()
+                cov3Ds.pop()
+                continue
+            det_inv = 1 / det
+            conic = [cov[2] * det_inv, -cov[1] * det_inv, cov[0] * det_inv]
+            conic_opacity.append([conic[0], conic[1], conic[2], opacities[idx]])
 
-    @property
-    def reduce_updates(self):
-        return self._reduce_updates
+            # compute radius, by finding eigenvalues of 2d covariance
+            # transfrom point from NDC to Pixel
+            mid = 0.5 * (cov[0] + cov[1])
+            lambda1 = mid + sqrt(max(0.1, mid * mid - det))
+            lambda2 = mid - sqrt(max(0.1, mid * mid - det))
+            my_radius = ceil(3 * sqrt(max(lambda1, lambda2)))
+            point_image = [ndc2Pix(p_proj[0], W), ndc2Pix(p_proj[1], H)]
 
-    @reduce_updates.setter
-    def reduce_updates(self, val):
-        self._reduce_updates = val
+            radii.append(my_radius)
+            points_xy_image.append(point_image)
 
-    def update_gaussian_data(self, gaus: util_gau.GaussianData):
-        raise NotImplementedError()
-    
-    def sort_and_update(self):
-        raise NotImplementedError()
+            # convert spherical harmonics coefficients to RGB color
+            sh = shs[idx]
+            result = computeColorFromSH(D, p_orig, cam_pos, sh)
+            rgbs.append(result)
 
-    def set_scale_modifier(self, modifier: float):
-        raise NotImplementedError()
-    
-    def set_render_mod(self, mod: int):
-        raise NotImplementedError()
-    
-    def update_camera_pose(self, camera: camera.Camera):
-        raise NotImplementedError()
+        return dict(
+            rgbs=rgbs,
+            cov3Ds=cov3Ds,
+            depths=depths,
+            radii=radii,
+            conic_opacity=conic_opacity,
+            points_xy_image=points_xy_image,
+        )
 
-    def update_camera_intrin(self, camera: camera.Camera):
-        raise NotImplementedError()
-    
-    def draw(self):
-        raise NotImplementedError()
-    
-    def set_render_reso(self, w, h):
-        raise NotImplementedError()
+    def render(
+        self, point_list, W, H, points_xy_image, features, conic_opacity, bg_color
+    ):
 
+        out_color = np.zeros((H, W, 3))
+        pbar = tqdm(range(H * W))
 
-class OpenGLRenderer(GaussianRenderBase):
-    def __init__(self, w, h):
-        super().__init__()
-        gl.glViewport(0, 0, w, h)
-        self.program = util.load_shaders('shaders/gau_vert.glsl', 'shaders/gau_frag.glsl')
+        # loop pixel
+        for i in range(H):
+            for j in range(W):
+                pbar.update(1)
+                pixf = [i, j]
+                C = [0, 0, 0]
 
-        # Vertex data for a quad
-        self.quad_v = np.array([
-            -1,  1,
-            1,  1,
-            1, -1,
-            -1, -1
-        ], dtype=np.float32).reshape(4, 2)
-        self.quad_f = np.array([
-            0, 1, 2,
-            0, 2, 3
-        ], dtype=np.uint32).reshape(2, 3)
-        
-        # load quad geometry
-        vao, buffer_id = util.set_attributes(self.program, [("position", self.quad_v)])
-        util.set_faces_tovao(vao, self.quad_f)
-        self.vao = vao
-        self.gau_bufferid = None
-        self.index_bufferid = None
-        # opengl settings
-        gl.glDisable(gl.GL_CULL_FACE)
-        gl.glEnable(gl.GL_BLEND)
-        gl.glBlendFunc(gl.GL_SRC_ALPHA, gl.GL_ONE_MINUS_SRC_ALPHA)
+                # loop gaussian
+                for idx in point_list:
 
-        self.update_vsync()
+                    # init helper variables, transmirrance
+                    T = 1
 
-    def update_vsync(self):
-        if wglSwapIntervalEXT is not None:
-            wglSwapIntervalEXT(1 if self.reduce_updates else 0)
-        else:
-            print("VSync is not supported")
+                    # Resample using conic matrix
+                    # (cf. "Surface Splatting" by Zwicker et al., 2001)
+                    xy = points_xy_image[idx]  # center of 2d gaussian
+                    d = [
+                        xy[0] - pixf[0],
+                        xy[1] - pixf[1],
+                    ]  # distance from center of pixel
+                    con_o = conic_opacity[idx]
+                    power = (
+                        -0.5 * (con_o[0] * d[0] * d[0] + con_o[2] * d[1] * d[1])
+                        - con_o[1] * d[0] * d[1]
+                    )
+                    if power > 0:
+                        continue
 
-    def update_gaussian_data(self, gaus: util_gau.GaussianData):
-        self.gaussians = gaus
-        # load gaussian geometry
-        gaussian_data = gaus.flat()
-        self.gau_bufferid = util.set_storage_buffer_data(self.program, "gaussian_data", gaussian_data, 
-                                                         bind_idx=0,
-                                                         buffer_id=self.gau_bufferid)
-        util.set_uniform_1int(self.program, gaus.sh_dim, "sh_dim")
+                    # Eq. (2) from 3D Gaussian splatting paper.
+                    # Compute color
+                    alpha = min(0.99, con_o[3] * np.exp(power))
+                    if alpha < 1 / 255:
+                        continue
+                    test_T = T * (1 - alpha)
+                    if test_T < 0.0001:
+                        break
 
-    def sort_and_update(self, camera: camera.Camera):
-        index = _sort_gaussian(self.gaussians, camera.get_view_mat())
-        self.index_bufferid = util.set_storage_buffer_data(self.program, "gi", index, 
-                                                           bind_idx=1,
-                                                           buffer_id=self.index_bufferid)
-        return
-   
-    def set_scale_modifier(self, modifier):
-        util.set_uniform_1f(self.program, modifier, "scale_modifier")
+                    # Eq. (3) from 3D Gaussian splatting paper.
+                    color = features[idx]
+                    for ch in range(3):
+                        C[ch] += color[ch] * alpha * T
 
-    def set_render_mod(self, mod: int):
-        util.set_uniform_1int(self.program, mod, "render_mod")
+                    T = test_T
 
-    def set_render_reso(self, w, h):
-        gl.glViewport(0, 0, w, h)
+                # get final color
+                for ch in range(3):
+                    out_color[j, i, ch] = C[ch] + T * bg_color[ch]
 
-    def update_camera_pose(self, camera: camera.Camera):
-        view_mat = camera.get_view_mat()
-        util.set_uniform_mat4(self.program, view_mat, "view_matrix")
-        util.set_uniform_v3(self.program, camera.position, "cam_pos")
-
-    def update_camera_intrin(self, camera: camera.Camera):
-        proj_mat = camera.get_project_mat()
-        util.set_uniform_mat4(self.program, proj_mat, "projection_matrix")
-        util.set_uniform_v3(self.program, camera.get_htanfovxy_focal(), "hfovxy_focal")
-
-    def draw(self):
-        gl.glUseProgram(self.program)
-        gl.glBindVertexArray(self.vao)
-        num_gau = len(self.gaussians)
-        gl.glDrawElementsInstanced(gl.GL_TRIANGLES, len(self.quad_f.reshape(-1)), gl.GL_UNSIGNED_INT, None, num_gau)
+        return out_color

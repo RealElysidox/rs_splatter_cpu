@@ -1,133 +1,133 @@
+import cv2
 import numpy as np
-import glm
+import math
+import matplotlib.pyplot as plt
+from mpl_toolkits.mplot3d import Axes3D
 
-class Camera:
-    def __init__(self, h, w):
-        self.znear = 0.01
-        self.zfar = 100
-        self.h = h
-        self.w = w
-        self.fovy = np.pi / 2
-        self.position = np.array([0.0, 0.0, 3.0]).astype(np.float32)
-        self.target = np.array([0.0, 0.0, 0.0]).astype(np.float32)
-        self.up = np.array([0.0, -1.0, 0.0]).astype(np.float32)
-        self.yaw = -np.pi / 2
-        self.pitch = 0
-        
-        self.is_pose_dirty = True
-        self.is_intrin_dirty = True
-        
-        self.last_x = 640
-        self.last_y = 360
-        self.first_mouse = True
-        
-        self.is_leftmouse_pressed = False
-        self.is_rightmouse_pressed = False
-        
-        self.rot_sensitivity = 0.02
-        self.trans_sensitivity = 0.01
-        self.zoom_sensitivity = 0.08
-        self.roll_sensitivity = 0.03
-        self.target_dist = 3.
-    
-    def global_rot_mat(self):
-        x = np.array([1, 0, 0])
-        z = np.cross(x, self.up)
-        z = z / np.linalg.norm(z)
-        x = np.cross(self.up, z)
-        return np.stack([x, self.up, z], axis=-1)
 
-    def get_view_mat(self):
-        return np.array(glm.lookAt(self.position, self.target, self.up))
+# get (h, w, 3) cavas
+def create_canvas(h, w):
+    return np.zeros((h, w, 3))
 
-    def get_project_mat(self):
-        # htanx, htany, focal = self.get_htanfovxy_focal()
-        # f_n = self.zfar - self.znear
-        # proj_mat = np.array([
-        #     1 / htanx, 0, 0, 0,
-        #     0, 1 / htany, 0, 0,
-        #     0, 0, self.zfar / f_n, - 2 * self.zfar * self.znear / f_n,
-        #     0, 0, 1, 0
-        # ])
-        project_mat = glm.perspective(
-            self.fovy,
-            self.w / self.h,
-            self.znear,
-            self.zfar
-        )
-        return np.array(project_mat).astype(np.float32)
 
-    def get_htanfovxy_focal(self):
-        htany = np.tan(self.fovy / 2)
-        htanx = htany / self.h * self.w
-        focal = self.h / (2 * htany)
-        return [htanx, htany, focal]
+def get_model_matrix(angle):
+    angle *= np.pi / 180
+    return np.array(
+        [
+            [np.cos(angle), -np.sin(angle), 0, 0],
+            [np.sin(angle), np.cos(angle), 0, 0],
+            [0, 0, 1, 0],
+            [0, 0, 0, 1],
+        ]
+    )
 
-    def get_focal(self):
-        return self.h / (2 * np.tan(self.fovy / 2))
 
-    def process_mouse(self, xpos, ypos):
-        if self.first_mouse:
-            self.last_x = xpos
-            self.last_y = ypos
-            self.first_mouse = False
+# from world to camera
+def get_view_matrix(eye_pose):
+    return np.array(
+        [
+            [1, 0, 0, -eye_pose[0]],
+            [0, 1, 0, -eye_pose[1]],
+            [0, 0, 1, -eye_pose[2]],
+            [0, 0, 0, 1],
+        ]
+    )
 
-        xoffset = xpos - self.last_x
-        yoffset = self.last_y - ypos
-        self.last_x = xpos
-        self.last_y = ypos
 
-        if self.is_leftmouse_pressed:
-            self.yaw += xoffset * self.rot_sensitivity
-            self.pitch += yoffset * self.rot_sensitivity
+# get projection, including perspective and orthographic
+def get_proj_matrix(fov, aspect, near, far):
+    t2a = np.tan(fov / 2.0)
+    return np.array(
+        [
+            [1 / (aspect * t2a), 0, 0, 0],
+            [0, 1 / t2a, 0, 0],
+            [0, 0, (near + far) / (near - far), 2 * near * far / (near - far)],
+            [0, 0, -1, 0],
+        ]
+    )
 
-            self.pitch = np.clip(self.pitch, -np.pi / 2, np.pi / 2)
 
-            front = np.array([np.cos(self.yaw) * np.cos(self.pitch), 
-                            np.sin(self.pitch), np.sin(self.yaw) * 
-                            np.cos(self.pitch)])
-            front = self.global_rot_mat() @ front.reshape(3, 1)
-            front = front[:, 0]
-            self.position[:] = - front * np.linalg.norm(self.position - self.target) + self.target
-            
-            self.is_pose_dirty = True
-        
-        if self.is_rightmouse_pressed:
-            front = self.target - self.position
-            front = front / np.linalg.norm(front)
-            right = np.cross(self.up, front)
-            self.position += right * xoffset * self.trans_sensitivity
-            self.target += right * xoffset * self.trans_sensitivity
-            cam_up = np.cross(right, front)
-            self.position += cam_up * yoffset * self.trans_sensitivity
-            self.target += cam_up * yoffset * self.trans_sensitivity
-            
-            self.is_pose_dirty = True
-        
-    def process_wheel(self, dx, dy):
-        front = self.target - self.position
-        front = front / np.linalg.norm(front)
-        self.position += front * dy * self.zoom_sensitivity
-        self.target += front * dy * self.zoom_sensitivity
-        self.is_pose_dirty = True
-        
-    def process_roll_key(self, d):
-        front = self.target - self.position
-        right = np.cross(front, self.up)
-        new_up = self.up + right * (d * self.roll_sensitivity / np.linalg.norm(right))
-        self.up = new_up / np.linalg.norm(new_up)
-        self.is_pose_dirty = True
+def get_viewport_matrix(h, w):
+    return np.array(
+        [[w / 2, 0, 0, w / 2], [0, h / 2, 0, h / 2], [0, 0, 1, 0], [0, 0, 0, 1]]
+    )
 
-    def flip_ground(self):
-        self.up = -self.up
-        self.is_pose_dirty = True
+def getWorld2View2(R, t, translate=np.array([0.0, 0.0, 0.0]), scale=1.0):
+    Rt = np.zeros((4, 4))
+    Rt[:3, :3] = R.transpose()
+    Rt[:3, 3] = t
+    Rt[3, 3] = 1.0
 
-    def update_target_distance(self):
-        _dir = self.target - self.position
-        _dir = _dir / np.linalg.norm(_dir)
-        self.target = self.position + _dir * self.target_dist
-        
-    def update_resolution(self, height, width):
-        self.h = max(height, 1)
-        self.w = max(width, 1)
-        self.is_intrin_dirty = True
+    C2W = np.linalg.inv(Rt)
+    cam_center = C2W[:3, 3]
+    cam_center = (cam_center + translate) * scale
+    C2W[:3, 3] = cam_center
+    Rt = np.linalg.inv(C2W)
+    return np.float32(Rt)
+
+
+def getProjectionMatrix(znear, zfar, fovX, fovY):
+    tanHalfFovY = math.tan((fovY / 2))
+    tanHalfFovX = math.tan((fovX / 2))
+
+    top = tanHalfFovY * znear
+    bottom = -top
+    right = tanHalfFovX * znear
+    left = -right
+
+    P = np.zeros((4, 4))
+
+    z_sign = 1.0
+
+    P[0, 0] = 2.0 * znear / (right - left)
+    P[1, 1] = 2.0 * znear / (top - bottom)
+    P[0, 2] = (right + left) / (right - left)
+    P[1, 2] = (top + bottom) / (top - bottom)
+    P[3, 2] = z_sign
+    P[2, 2] = z_sign * zfar / (zfar - znear)
+    P[2, 3] = -(zfar * znear) / (zfar - znear)
+    return P
+
+if __name__ == "__main__":
+    frame = create_canvas(700, 700)
+    angle = 0
+    eye = [0, 0, 5]
+    pts = [[2, 0, -2], [0, 2, -2], [-2, 0, -2]]
+    viewport = get_viewport_matrix(700, 700)
+
+    # get mvp matrix
+    mvp = get_model_matrix(angle)
+    mvp = np.dot(get_view_matrix(eye), mvp)
+    mvp = np.dot(get_proj_matrix(45, 1, 0.1, 50), mvp)  # 4x4
+
+    # loop points
+    pts_2d = []
+    for p in pts:
+        p = np.array(p + [1])  # 3x1 -> 4x1
+        p = np.dot(mvp, p)
+        p /= p[3]
+
+        # viewport
+        p = np.dot(viewport, p)[:2]
+        pts_2d.append([int(p[0]), int(p[1])])
+
+    vis = 1
+    if vis:
+        # visualize 3d
+        fig = plt.figure()
+        pts = np.array(pts)
+        x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
+
+        ax = Axes3D(fig)
+        ax.scatter(x, y, z, s=80, marker="^", c="g")
+        ax.scatter([eye[0]], [eye[1]], [eye[2]], s=180, marker=7, c="r")
+        ax.plot_trisurf(x, y, z, linewidth=0.2, antialiased=True, alpha=0.5)
+        plt.show()
+
+        # visualize 2d
+        c = (255, 255, 255)
+        for i in range(3):
+            for j in range(i + 1, 3):
+                cv2.line(frame, pts_2d[i], pts_2d[j], c, 2)
+        cv2.imshow("screen", frame)
+        cv2.waitKey(0)

@@ -1,172 +1,167 @@
-from OpenGL.GL import *
-import OpenGL.GL.shaders as shaders
 import numpy as np
-import glm
+from camera import getProjectionMatrix
 
 
-def load_shaders(vs, fs):
-    vertex_shader = open(vs, 'r').read()        
-    fragment_shader = open(fs, 'r').read()
+SH_C0 = 0.28209479177387814
+SH_C1 = 0.4886025119029199
+SH_C2 = [
+    1.0925484305920792,
+    -1.0925484305920792,
+    0.31539156525252005,
+    -1.0925484305920792,
+    0.5462742152960396,
+]
+SH_C3 = [
+    -0.5900435899266435,
+    2.890611442640554,
+    -0.4570457994644658,
+    0.3731763325901154,
+    -0.4570457994644658,
+    1.445305721320277,
+    -0.5900435899266435,
+]
 
-    target_shader = shaders.compileProgram(
-        shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
-        shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER),
+
+def computeColorFromSH(deg, pos, campos, sh):
+    # The implementation is loosely based on code for
+    # "Differentiable Point-Based Radiance Fields for
+    # Efficient View Synthesis" by Zhang et al. (2022)
+
+    dir = pos - campos
+    dir = dir / np.linalg.norm(dir)
+
+    result = SH_C0 * sh[0]
+
+    if deg > 0:
+        x, y, z = dir
+        result = result - SH_C1 * y * sh[1] + SH_C1 * z * sh[2] - SH_C1 * x * sh[3]
+
+        if deg > 1:
+            xx = x * x
+            yy = y * y
+            zz = z * z
+            xy = x * y
+            yz = y * z
+            xz = x * z
+            result = (
+                result
+                + SH_C2[0] * xy * sh[4]
+                + SH_C2[1] * yz * sh[5]
+                + SH_C2[2] * (2.0 * zz - xx - yy) * sh[6]
+                + SH_C2[3] * xz * sh[7]
+                + SH_C2[4] * (xx - yy) * sh[8]
+            )
+
+            if deg > 2:
+                result = (
+                    result
+                    + SH_C3[0] * y * (3.0 * xx - yy) * sh[9]
+                    + SH_C3[1] * xy * z * sh[10]
+                    + SH_C3[2] * y * (4.0 * zz - xx - yy) * sh[11]
+                    + SH_C3[3] * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * sh[12]
+                    + SH_C3[4] * x * (4.0 * zz - xx - yy) * sh[13]
+                    + SH_C3[5] * z * (xx - yy) * sh[14]
+                    + SH_C3[6] * x * (xx - 3.0 * yy) * sh[15]
+                )
+    result += 0.5
+    return np.clip(result, a_min=0, a_max=1)
+
+def ndc2Pix(v, S):
+    return ((v + 1.0) * S - 1.0) * 0.5
+
+
+def in_frustum(p_orig, viewmatrix):
+    # bring point to screen space
+    p_view = transformPoint4x3(p_orig, viewmatrix)
+
+    if p_view[2] <= 0.2:
+        return None
+    return p_view
+
+
+def transformPoint4x4(p, matrix):
+    matrix = np.array(matrix).flatten(order="F")
+    x, y, z = p
+    transformed = np.array(
+        [
+            matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+            matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+            matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+            matrix[3] * x + matrix[7] * y + matrix[11] * z + matrix[15],
+        ]
     )
-    return target_shader
+    return transformed
 
 
-def compile_shaders(vertex_shader, fragment_shader):
-    active_shader = shaders.compileProgram(
-        shaders.compileShader(vertex_shader, GL_VERTEX_SHADER),
-        shaders.compileShader(fragment_shader, GL_FRAGMENT_SHADER),
+def transformPoint4x3(p, matrix):
+    matrix = np.array(matrix).flatten(order="F")
+    x, y, z = p
+    transformed = np.array(
+        [
+            matrix[0] * x + matrix[4] * y + matrix[8] * z + matrix[12],
+            matrix[1] * x + matrix[5] * y + matrix[9] * z + matrix[13],
+            matrix[2] * x + matrix[6] * y + matrix[10] * z + matrix[14],
+        ]
     )
-    return active_shader
+    return transformed
 
 
-def set_attributes(program, attributes, vao=None, buffer_ids=None):
-    glUseProgram(program)
-    vao = vao or glGenVertexArrays(1)
-    glBindVertexArray(vao)
-
-    buffer_ids = buffer_ids or [glGenBuffers(1) for _ in attributes]
-    for i, (name, data) in enumerate(attributes):
-        buffer_id = buffer_ids[i]
-        glBindBuffer(GL_ARRAY_BUFFER, buffer_id)
-        glBufferData(GL_ARRAY_BUFFER, data.nbytes, data, GL_STATIC_DRAW)
-        pos = glGetAttribLocation(program, name)
-        glVertexAttribPointer(pos, data.shape[-1], GL_FLOAT, False, 0, None)
-        glEnableVertexAttribArray(pos)
-    glBindBuffer(GL_ARRAY_BUFFER, 0)
-    return vao, buffer_ids
-
-def set_attribute(program, name, data, vao=None, buffer_id=None):
-    return set_attributes(program, [(name, data)], vao, [buffer_id])
-
-def set_attribute_instanced(program, name, data, instance_stride=1, vao=None, buffer_id=None):
-    vao, buffer_ids = set_attributes(program, [(name, data)], vao, [buffer_id])
-    pos = glGetAttribLocation(program, name)
-    glVertexAttribDivisor(pos, instance_stride)
-    return vao, buffer_ids[0]
-
-def set_storage_buffer_data(program, key, value: np.ndarray, bind_idx, vao=None, buffer_id=None):
-    glUseProgram(program)
-    # if vao is None:  # TODO: if this is really unnecessary?
-    #     vao = glGenVertexArrays(1)
-    if vao is not None:
-        glBindVertexArray(vao)
-    
-    buffer_id = buffer_id or glGenBuffers(1)
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, buffer_id)
-    glBufferData(GL_SHADER_STORAGE_BUFFER, value.nbytes, value.reshape(-1), GL_STATIC_DRAW)
-    # pos = glGetProgramResourceIndex(program, GL_SHADER_STORAGE_BLOCK, key)  # TODO: ???
-    glBindBufferBase(GL_SHADER_STORAGE_BUFFER, bind_idx, buffer_id)
-    # glShaderStorageBlockBinding(program, pos, pos)  # TODO: ???
-    glBindBuffer(GL_SHADER_STORAGE_BUFFER, 0)
-    return buffer_id
-
-def set_faces_tovao(vao, faces: np.ndarray):
-    # faces
-    glBindVertexArray(vao)
-    element_buffer = glGenBuffers(1)
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer)
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, faces.nbytes, faces, GL_STATIC_DRAW)
-    return element_buffer
-
-def set_gl_bindings(vertices, faces):
-    # vertices
-    vao = glGenVertexArrays(1)
-    glBindVertexArray(vao)
-    # vertex_buffer = glGenVertexArrays(1)
-    vertex_buffer = glGenBuffers(1)
-    glBindBuffer(GL_ARRAY_BUFFER, vertex_buffer)
-    glBufferData(GL_ARRAY_BUFFER, vertices.nbytes, vertices, GL_STATIC_DRAW)
-    glVertexAttribPointer(0, 4, GL_FLOAT, False, 0, None)
-    glEnableVertexAttribArray(0)
-
-    # faces
-    element_buffer = glGenBuffers(1)
-    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, element_buffer)
-    glBufferData(GL_ELEMENT_ARRAY_BUFFER, faces.nbytes, faces, GL_STATIC_DRAW)
-
-def set_uniform_mat4(shader, content, name):
-    glUseProgram(shader)
-    if isinstance(content, glm.mat4):
-        content = np.array(content).astype(np.float32)
-    else:
-        content = content.T
-    glUniformMatrix4fv(
-        glGetUniformLocation(shader, name), 
-        1,
-        GL_FALSE,
-        content.astype(np.float32)
-    )
-
-def set_uniform_1f(shader, content, name):
-    glUseProgram(shader)
-    glUniform1f(
-        glGetUniformLocation(shader, name), 
-        content,
-    )
-
-def set_uniform_1int(shader, content, name):
-    glUseProgram(shader)
-    glUniform1i(
-        glGetUniformLocation(shader, name), 
-        content
-    )
-
-def set_uniform_v3f(shader, contents, name):
-    glUseProgram(shader)
-    glUniform3fv(
-        glGetUniformLocation(shader, name),
-        len(contents),
-        contents
+# covariance = RS[S^T][R^T]
+def computeCov3D(scale, mod, rot):
+    # create scaling matrix
+    S = np.array(
+        [[scale[0] * mod, 0, 0], [0, scale[1] * mod, 0], [0, 0, scale[2] * mod]]
     )
 
-def set_uniform_v3(shader, contents, name):
-    glUseProgram(shader)
-    glUniform3f(
-        glGetUniformLocation(shader, name),
-        contents[0], contents[1], contents[2]
-    )
+    # normalize quaternion to get valid rotation
+    # we use rotation matrix
+    R = rot
 
-def set_uniform_v1f(shader, contents, name):
-    glUseProgram(shader)
-    glUniform1fv(
-        glGetUniformLocation(shader, name),
-        len(contents),
-        contents
-    )
-    
-def set_uniform_v2(shader, contents, name):
-    glUseProgram(shader)
-    glUniform2f(
-        glGetUniformLocation(shader, name),
-        contents[0], contents[1]
-    )
+    # compute 3d world covariance matrix Sigma
+    M = np.dot(R, S)
+    cov3D = np.dot(M, M.T)
 
-def set_texture2d(img, texid=None):
-    h, w, c = img.shape
-    assert img.dtype == np.uint8
-    texid = texid or glGenTextures(1)
-    glBindTexture(GL_TEXTURE_2D, texid)
-    glTexImage2D(
-        GL_TEXTURE_2D, 0, GL_RGB, w, h, 0,   
-        GL_RGB, GL_UNSIGNED_BYTE, img
-    )
-    glActiveTexture(GL_TEXTURE0)  # can be removed
-    # glGenerateMipmap(GL_TEXTURE_2D)
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR)
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR)
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_BORDER)
-    glTexParameterf(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_BORDER)
-    return texid
+    return cov3D
 
-def update_texture2d(img, texid, offset):
-    x1, y1 = offset
-    h, w = img.shape[:2]
-    glBindTexture(GL_TEXTURE_2D, texid)
-    glTexSubImage2D(
-        GL_TEXTURE_2D, 0, x1, y1, w, h,
-        GL_RGB, GL_UNSIGNED_BYTE, img
+
+def computeCov2D(mean, focal_x, focal_y, tan_fovx, tan_fovy, cov3D, viewmatrix):
+    # The following models the steps outlined by equations 29
+    # and 31 in "EWA Splatting" (Zwicker et al., 2002).
+    # Additionally considers aspect / scaling of viewport.
+    # Transposes used to account for row-/column-major conventions.
+
+    t = transformPoint4x3(mean, viewmatrix)
+
+    limx = 1.3 * tan_fovx
+    limy = 1.3 * tan_fovy
+    txtz = t[0] / t[2]
+    tytz = t[1] / t[2]
+    t[0] = min(limx, max(-limx, txtz)) * t[2]
+    t[1] = min(limy, max(-limy, tytz)) * t[2]
+
+    J = np.array(
+        [
+            [focal_x / t[2], 0, -(focal_x * t[0]) / (t[2] * t[2])],
+            [0, focal_y / t[2], -(focal_y * t[1]) / (t[2] * t[2])],
+            [0, 0, 0],
+        ]
     )
+    W = viewmatrix[:3, :3]
+    T = np.dot(J, W)
+
+    cov = np.dot(T, cov3D)
+    cov = np.dot(cov, T.T)
+
+    # Apply low-pass filter
+    # Every Gaussia should be at least one pixel wide/high
+    # Discard 3rd row and column
+    cov[0, 0] += 0.3
+    cov[1, 1] += 0.3
+    return [cov[0, 0], cov[0, 1], cov[1, 1]]
+
+if __name__ == "__main__":
+    deg = 3
+    pos = np.array([2, 0, -2])
+    campos = np.array([0, 0, 5])
+    sh = np.random.random((16, 3))
+    computeColorFromSH(deg, pos, campos, sh)

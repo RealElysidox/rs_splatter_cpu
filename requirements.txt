@@ -1,7 +1,4 @@
-glfw
-PyGLM
-imgui
-PyOpenGL
-numpy
-imageio
-plyfile
+opencv-python==4.10.0.82
+matplotlib==3.5.3
+loguru
+tqdm
