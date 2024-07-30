@@ -5,7 +5,7 @@ from loguru import logger
 from math import sqrt, ceil
 
 from util import *
-from camera import getWorld2View2, getProjectionMatrix
+from camera import get_world2view_mat, getProjectionMatrix
 
 
 class Rasterizer:

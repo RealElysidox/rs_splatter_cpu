@@ -6,11 +6,11 @@ from mpl_toolkits.mplot3d import Axes3D
 
 
 # get (h, w, 3) cavas
-def create_canvas(h, w):
+def canvas(h, w):
     return np.zeros((h, w, 3))
 
 
-def get_model_matrix(angle):
+def get_model_mat(angle):
     angle *= np.pi / 180
     return np.array(
         [
@@ -23,7 +23,7 @@ def get_model_matrix(angle):
 
 
 # from world to camera
-def get_view_matrix(eye_pose):
+def get_view_mat(eye_pose):
     return np.array(
         [
             [1, 0, 0, -eye_pose[0]],
@@ -35,7 +35,7 @@ def get_view_matrix(eye_pose):
 
 
 # get projection, including perspective and orthographic
-def get_proj_matrix(fov, aspect, near, far):
+def get_proj_mat(fov, aspect, near, far):
     t2a = np.tan(fov / 2.0)
     return np.array(
         [
@@ -47,12 +47,12 @@ def get_proj_matrix(fov, aspect, near, far):
     )
 
 
-def get_viewport_matrix(h, w):
+def get_viewport_mat(h, w):
     return np.array(
         [[w / 2, 0, 0, w / 2], [0, h / 2, 0, h / 2], [0, 0, 1, 0], [0, 0, 0, 1]]
     )
 
-def getWorld2View2(R, t, translate=np.array([0.0, 0.0, 0.0]), scale=1.0):
+def get_world2view_mat(R, t, translate=np.array([0.0, 0.0, 0.0]), scale=1.0):
     Rt = np.zeros((4, 4))
     Rt[:3, :3] = R.transpose()
     Rt[:3, 3] = t
@@ -89,16 +89,16 @@ def getProjectionMatrix(znear, zfar, fovX, fovY):
     return P
 
 if __name__ == "__main__":
-    frame = create_canvas(700, 700)
+    frame = canvas(700, 700)
     angle = 0
     eye = [0, 0, 5]
     pts = [[2, 0, -2], [0, 2, -2], [-2, 0, -2]]
-    viewport = get_viewport_matrix(700, 700)
+    viewport = get_viewport_mat(700, 700)
 
     # get mvp matrix
-    mvp = get_model_matrix(angle)
-    mvp = np.dot(get_view_matrix(eye), mvp)
-    mvp = np.dot(get_proj_matrix(45, 1, 0.1, 50), mvp)  # 4x4
+    mvp = get_model_mat(angle)
+    mvp = np.dot(get_view_mat(eye), mvp)
+    mvp = np.dot(get_proj_mat(45, 1, 0.1, 50), mvp)  # 4x4
 
     # loop points
     pts_2d = []

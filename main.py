@@ -16,7 +16,7 @@ if __name__ == "__main__":
     cam_pos = np.array([0, 0, 5])
     R = np.array([[1, 0, 0], [0, 1, 0], [0, 0, -1]])
     proj_param = {"znear": 0.01, "zfar": 100, "fovX": 45, "fovY": 45}
-    viewmatrix = getWorld2View2(R=R, t=cam_pos)
+    viewmatrix = get_world2view_mat(R=R, t=cam_pos)
     projmatrix = getProjectionMatrix(**proj_param)
     projmatrix = np.dot(projmatrix, viewmatrix)
     tanfovx = math.tan(proj_param["fovX"] * 0.5)
