@@ -1,5 +1,5 @@
 import numpy as np
-from camera import getProjectionMatrix
+from camera import get_proj_mat_J
 
 
 SH_C0 = 0.28209479177387814

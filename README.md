@@ -18,3 +18,6 @@ pip install -r requirement.txt
 ## splat!
 python main.py
 ```
+
+And you will get a simple illustration:
+<img src="asset\3dgs.png">
