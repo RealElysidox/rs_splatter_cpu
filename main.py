@@ -26,9 +26,9 @@ if __name__ == "__main__":
     # render
     rasterizer = Rasterizer()
     out_color = rasterizer.splat(
-        P=len(pts),
-        D=3,
-        M=16,
+        guassian_num=len(pts),
+        basis_degree=3,
+        basis_num=16,
         background=np.array([0, 0, 0]),
         width=700,
         height=700,

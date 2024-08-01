@@ -70,7 +70,7 @@ def ndc2Pix(v, S):
     return ((v + 1.0) * S - 1.0) * 0.5
 
 
-def in_frustum(p_orig, viewmatrix):
+def in_cutoff(p_orig, viewmatrix):
     # bring point to screen space
     p_view = transformPoint4x3(p_orig, viewmatrix)
 
@@ -106,18 +106,11 @@ def transformPoint4x3(p, matrix):
     return transformed
 
 
-# covariance = RS[S^T][R^T]
 def computeCov3D(scale, mod, rot):
-    # create scaling matrix
     S = np.array(
         [[scale[0] * mod, 0, 0], [0, scale[1] * mod, 0], [0, 0, scale[2] * mod]]
     )
-
-    # normalize quaternion to get valid rotation
-    # we use rotation matrix
     R = rot
-
-    # compute 3d world covariance matrix Sigma
     M = np.dot(R, S)
     cov3D = np.dot(M, M.T)
 

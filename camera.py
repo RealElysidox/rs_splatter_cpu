@@ -5,7 +5,6 @@ import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
 
 
-# get (h, w, 3) cavas
 def canvas(h, w):
     return np.zeros((h, w, 3))
 
@@ -22,7 +21,6 @@ def get_model_mat(angle):
     )
 
 
-# from world to camera
 def get_view_mat(eye_pose):
     return np.array(
         [
@@ -34,7 +32,6 @@ def get_view_mat(eye_pose):
     )
 
 
-# get projection, including perspective and orthographic
 def get_proj_mat(fov, aspect, near, far):
     t2a = np.tan(fov / 2.0)
     return np.array(
@@ -95,25 +92,21 @@ if __name__ == "__main__":
     pts = [[2, 0, -2], [0, 2, -2], [-2, 0, -2]]
     viewport = get_viewport_mat(700, 700)
 
-    # get mvp matrix
     mvp = get_model_mat(angle)
     mvp = np.dot(get_view_mat(eye), mvp)
-    mvp = np.dot(get_proj_mat(45, 1, 0.1, 50), mvp)  # 4x4
+    mvp = np.dot(get_proj_mat(45, 1, 0.1, 50), mvp)
 
-    # loop points
     pts_2d = []
     for p in pts:
-        p = np.array(p + [1])  # 3x1 -> 4x1
+        p = np.array(p + [1])
         p = np.dot(mvp, p)
         p /= p[3]
 
-        # viewport
         p = np.dot(viewport, p)[:2]
         pts_2d.append([int(p[0]), int(p[1])])
 
     vis = 1
     if vis:
-        # visualize 3d
         fig = plt.figure()
         pts = np.array(pts)
         x, y, z = pts[:, 0], pts[:, 1], pts[:, 2]
@@ -124,7 +117,6 @@ if __name__ == "__main__":
         ax.plot_trisurf(x, y, z, linewidth=0.2, antialiased=True, alpha=0.5)
         plt.show()
 
-        # visualize 2d
         c = (255, 255, 255)
         for i in range(3):
             for j in range(i + 1, 3):
